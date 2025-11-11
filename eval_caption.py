@@ -26,10 +26,64 @@ import numpy as np
 from PIL import Image
 from packaging import version
 import sklearn.preprocessing
-import metrics
 
 import torch
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
+
+from pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
+from pycocoevalcap.spice.spice import Spice
+from pycocoevalcap.meteor.meteor import Meteor
+from pycocoevalcap.bleu.bleu import Bleu
+from pycocoevalcap.cider.cider import Cider
+from pycocoevalcap.rouge.rouge import Rouge
+from pycocoevalcap.spice.spice import Spice
+
+def compute_regular_metrics(gt_text_list, pred_text_list):
+    metrics = []
+    names = []
+
+    pycoco_eval_cap_scorers = [(Bleu(4), 'bleu'),
+                               (Meteor(), 'meteor'),
+                               (Rouge(), 'rouge'),
+                               (Cider(), 'cider'),
+                               (Spice(), 'spice')]
+
+    for scorer, name in pycoco_eval_cap_scorers:
+        overall, per_cap = pycoco_eval(scorer, gt_text_list, pred_text_list)
+        metrics.append(overall)
+        names.append(name)
+
+    metrics = dict(zip(names, metrics))
+    return metrics
+
+def tokenize(refs, cands, no_op=False):
+    # no_op is a debug option to see how significantly not using the PTB tokenizer
+    # affects things
+    tokenizer = PTBTokenizer()
+
+    if no_op:
+        refs = {idx: [r for r in c_refs] for idx, c_refs in enumerate(refs)}
+        cands = {idx: [c] for idx, c in enumerate(cands)}
+
+    else:
+        refs = {idx: [{'caption':r} for r in c_refs] for idx, c_refs in enumerate(refs)}
+        cands = {idx: [{'caption':c}] for idx, c in enumerate(cands)}
+
+        refs = tokenizer.tokenize(refs)
+        cands = tokenizer.tokenize(cands)
+
+    return refs, cands
+
+
+def pycoco_eval(scorer, refs, cands):
+    '''
+    scorer is assumed to have a compute_score function.
+    refs is a list of lists of strings
+    cands is a list of predictions
+    '''
+    refs, cands = tokenize(refs, cands)
+    average_score, scores = scorer.compute_score(refs, cands)
+    return average_score, scores
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -258,7 +312,7 @@ def main():
 
     if args.references_json:
         if args.compute_other_ref_metrics:
-            other_metrics = metrics.get_all_metrics(references, candidates)
+            other_metrics = compute_regular_metrics(references, candidates)
             for k, v in other_metrics.items():
                 if k == 'bleu':
                     for bidx, sc in enumerate(v):
